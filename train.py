@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import time
 import datetime
@@ -120,5 +121,8 @@ if __name__ == '__main__':
         print('Evaluation result:', eval_res)
         pkl_save(f'{run_dir}/eval_res.pkl', eval_res)
         pkl_save(f'{run_dir}/out.pkl', out)
+
+        with open(f'{run_dir}/eval_res.json', 'w') as json_file:
+            json.dump(eval_res, json_file, indent=4)
 
     print("Finished.")
