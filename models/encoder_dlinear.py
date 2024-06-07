@@ -76,7 +76,7 @@ class BandedFourierLayer(nn.Module):
         nn.init.uniform_(self.bias, -bound, bound)
 
 
-class CoSTEncoder(nn.Module):
+class CoSTEncoderDlinear(nn.Module):
     def __init__(self, input_dims, output_dims,
                  kernels: List[int],
                  length: int,
@@ -93,8 +93,13 @@ class CoSTEncoder(nn.Module):
         self.mask_mode = mask_mode
         self.input_fc = nn.Linear(input_dims, hidden_dims)
 
-        # this is what I have to change
-        self.feature_extractor = DilatedConvEncoder(
+        self.feature_extractor_avg = DilatedConvEncoder(
+            hidden_dims,
+            [hidden_dims] * depth + [output_dims],
+            kernel_size=3
+        )
+
+        self.feature_extractor_err = DilatedConvEncoder(
             hidden_dims,
             [hidden_dims] * depth + [output_dims],
             kernel_size=3
@@ -112,10 +117,12 @@ class CoSTEncoder(nn.Module):
             [BandedFourierLayer(output_dims, component_dims, b, 1, length=length) for b in range(1)] #to extract seasonality
         )
 
-    def forward(self, x, tcn_output=False, mask='all_true'):  # x: B x T x input_dims
-        nan_mask = ~x.isnan().any(axis=-1)
-        x[~nan_mask] = 0
-        x = self.input_fc(x)  # B x T x Ch
+    def forward(self, x_avg, x_err, tcn_output=False, mask='all_true'):  # x: B x T x input_dims
+        nan_mask = ~x_avg.isnan().any(axis=-1)
+        x_avg[~nan_mask] = 0
+        x_err[~nan_mask] = 0
+        x_avg = self.input_fc(x_avg)  # B x T x Ch
+        x_err = self.input_fc(x_err)
 
         # generate & apply mask
         if mask is None:
@@ -125,26 +132,32 @@ class CoSTEncoder(nn.Module):
                 mask = 'all_true'
 
         if mask == 'binomial':
-            mask = generate_binomial_mask(x.size(0), x.size(1)).to(x.device)
+            mask = generate_binomial_mask(x_avg.size(0), x_avg.size(1)).to(x_avg.device)
         elif mask == 'continuous':
-            mask = generate_continuous_mask(x.size(0), x.size(1)).to(x.device)
+            mask = generate_continuous_mask(x_avg.size(0), x_avg.size(1)).to(x_avg.device)
         elif mask == 'all_true':
-            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
+            mask = x_avg.new_full((x_avg.size(0), x_avg.size(1)), True, dtype=torch.bool)
         elif mask == 'all_false':
-            mask = x.new_full((x.size(0), x.size(1)), False, dtype=torch.bool)
+            mask = x_avg.new_full((x_avg.size(0), x_avg.size(1)), False, dtype=torch.bool)
         elif mask == 'mask_last':
-            mask = x.new_full((x.size(0), x.size(1)), True, dtype=torch.bool)
+            mask = x_avg.new_full((x_avg.size(0), x_avg.size(1)), True, dtype=torch.bool)
             mask[:, -1] = False
 
         mask &= nan_mask
-        x[~mask] = 0
+        x_avg[~mask] = 0
+        x_err[~mask] = 0
 
         # conv encoder
-        x = x.transpose(1, 2)  # B x Ch x T
-        x = self.feature_extractor(x)  # B x Co x T
+        x_avg = x_avg.transpose(1, 2)  # B x Ch x T
+        x_avg = self.feature_extractor_avg(x_avg)  # B x Co x T
+
+        x_err = x_err.transpose(1, 2)  # B x Ch x T
+        x_err = self.feature_extractor_err(x_err)
+
+        x = x_avg + x_err
 
         if tcn_output:
-            return x.transpose(1, 2)
+            return x_avg.transpose(1, 2)
 
         trend = []
         for idx, mod in enumerate(self.tfd):
