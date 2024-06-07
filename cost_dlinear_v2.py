@@ -10,6 +10,7 @@ from torch.utils.data import TensorDataset, DataLoader, Dataset
 import numpy as np
 from einops import rearrange, repeat, reduce
 
+from models.encoder import CoSTEncoder
 from models.encoder_dlinear import CoSTEncoderDlinear
 from moving_avg_tensor_dataset import TimeSeriesDatasetWithMovingAvg
 from utils import take_per_row, split_with_nan, centerize_vary_length_series, torch_pad_nan
@@ -102,7 +103,7 @@ class PretrainDataset(TensorDataset):
 
 class CoSTModel(nn.Module):
     def __init__(self,
-                 encoder_q: nn.Module, encoder_k: nn.Module,
+                 encoder_q_avg: nn.Module, encoder_q_err: nn.Module, encoder_k_avg: nn.Module, encoder_k_err: nn.Module,
                  kernels: List[int],
                  device: Optional[str] = 'cuda',
                  dim: Optional[int] = 128,
@@ -121,8 +122,10 @@ class CoSTModel(nn.Module):
 
         self.alpha = alpha
 
-        self.encoder_q = encoder_q
-        self.encoder_k = encoder_k
+        self.encoder_q_avg = encoder_q_avg
+        self.encoder_q_err = encoder_q_err
+        self.encoder_k_avg = encoder_k_avg
+        self.encoder_k_err = encoder_k_err
 
         # create the encoders
         self.head_q = nn.Sequential(
@@ -136,7 +139,10 @@ class CoSTModel(nn.Module):
             nn.Linear(dim, dim)
         )
 
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+        for param_q, param_k in zip(self.encoder_q_avg.parameters(), self.encoder_k_avg.parameters()):
+            param_k.data.copy_(param_q.data)  # initialize
+            param_k.requires_grad = False  # not update by gradient
+        for param_q, param_k in zip(self.encoder_q_err.parameters(), self.encoder_k_err.parameters()):
             param_k.data.copy_(param_q.data)  # initialize
             param_k.requires_grad = False  # not update by gradient
         for param_q, param_k in zip(self.head_q.parameters(), self.head_k.parameters()):
@@ -188,14 +194,22 @@ class CoSTModel(nn.Module):
         # compute query features
         rand_idx = np.random.randint(0, xq_avg.shape[1])
 
-        q_t, q_s = self.encoder_q(xq_avg, xq_err)
+        q_t_avg, q_s_avg = self.encoder_q_avg(xq_avg)
+        q_t_err, q_s_err = self.encoder_q_err(xq_err)
+
+        q_t = q_t_avg + q_t_err
+        q_s = q_s_avg + q_s_err
+
         if q_t is not None:
             q_t = F.normalize(self.head_q(q_t[:, rand_idx]), dim=-1)
 
         # compute key features
         with torch.no_grad():  # no gradient for keys
             self._momentum_update_key_encoder()  # update key encoder
-            k_t, k_s = self.encoder_k(xk_avg, xk_err)
+            k_t_avg, k_s_avg = self.encoder_k_avg(xk_avg)
+            k_t_err, k_s_err = self.encoder_k_err(xk_err)
+            k_t = k_t_avg + k_t_err
+            k_s = k_s_avg + k_s_err
             if k_t is not None:
                 k_t = F.normalize(self.head_k(k_t[:, rand_idx]), dim=-1)
 
@@ -205,7 +219,10 @@ class CoSTModel(nn.Module):
         self._dequeue_and_enqueue(k_t)
 
         q_s = F.normalize(q_s, dim=-1)
-        _, k_s = self.encoder_q(xk_avg, xk_err)
+        _, k_s_avg = self.encoder_q_avg(xk_avg)
+        _, k_s_err = self.encoder_q_err(xk_err)
+        k_s = k_s_avg + k_s_err
+
         k_s = F.normalize(k_s, dim=-1)
 
         q_s_freq = fft.rfft(q_s, dim=1)
@@ -224,7 +241,9 @@ class CoSTModel(nn.Module):
         """
         Momentum update for key encoder
         """
-        for param_q, param_k in zip(self.encoder_q.parameters(), self.encoder_k.parameters()):
+        for param_q, param_k in zip(self.encoder_q_avg.parameters(), self.encoder_k_avg.parameters()):
+            param_k.data = param_k.data * self.m + param_q.data * (1 - self.m)
+        for param_q, param_k in zip(self.encoder_q_err.parameters(), self.encoder_k_err.parameters()):
             param_k.data = param_k.data * self.m + param_q.data * (1 - self.m)
         for param_q, param_k in zip(self.head_q.parameters(), self.head_k.parameters()):
             param_k.data = param_k.data * self.m + param_q.data * (1 - self.m)
@@ -243,7 +262,7 @@ class CoSTModel(nn.Module):
         self.queue_ptr[0] = ptr
 
 
-class CoSTDlinear:
+class CoSTDlinearV2:
     def __init__(self,
                  input_dims: int,
                  kernels: List[int],
@@ -272,7 +291,14 @@ class CoSTDlinear:
         if kernels is None:
             kernels = []
 
-        self.net = CoSTEncoderDlinear(
+        self.net_avg = CoSTEncoder(
+            input_dims=input_dims, output_dims=output_dims,
+            kernels=kernels,
+            length=max_train_length,
+            hidden_dims=hidden_dims, depth=depth,
+        ).to(self.device)
+
+        self.net_err = CoSTEncoder(
             input_dims=input_dims, output_dims=output_dims,
             kernels=kernels,
             length=max_train_length,
@@ -280,10 +306,12 @@ class CoSTDlinear:
         ).to(self.device)
 
         self.cost = CoSTModel(
-            self.net,
-            copy.deepcopy(self.net),
+            self.net_avg,
+            self.net_err,
+            copy.deepcopy(self.net_avg),
+            copy.deepcopy(self.net_err),
             kernels=kernels,
-            dim=self.net.component_dims,
+            dim=self.net_avg.component_dims,
             alpha=alpha,
             K=256,
             device=self.device,
@@ -388,7 +416,12 @@ class CoSTDlinear:
         return loss_log
     
     def _eval_with_pooling(self, x_avg, x_err, mask=None, slicing=None, encoding_window=None):
-        out_t, out_s = self.net(x_avg.to(self.device, non_blocking=True), x_err.to(self.device, non_blocking=True))  # l b t d
+        out1_t, out1_s = self.net_avg(x_avg.to(self.device, non_blocking=True))  # l b t d
+        out2_t, out2_s = self.net_err(x_err.to(self.device, non_blocking=True))  # l b t d
+
+        out_t = out1_t + out2_t
+        out_s = out1_s + out2_s
+
         out = torch.cat([out_t[:, -1], out_s[:, -1]], dim=-1)
         return rearrange(out.cpu(), 'b d -> b () d')
     
@@ -404,8 +437,10 @@ class CoSTDlinear:
             batch_size = self.batch_size
         n_samples, ts_l, _ = data.shape
 
-        org_training = self.net.training
-        self.net.eval()
+        org_training_avg = self.net_avg.training
+        org_training_err = self.net_err.training
+        self.net_avg.eval()
+        self.net_err.eval()
         
         dataset = TimeSeriesDatasetWithMovingAvg(torch.from_numpy(data).to(torch.float), n_time_cols=self.n_time_cols)
         # loader = DataLoader(dataset, batch_size=batch_size)
@@ -490,7 +525,8 @@ class CoSTDlinear:
                 
             output = torch.cat(output, dim=0)
 
-        self.net.train(org_training)
+        self.net_avg.train(org_training_avg)
+        self.net_err.train(org_training_err)
         return output.numpy()
     
     def save(self, fn):

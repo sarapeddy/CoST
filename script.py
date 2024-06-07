@@ -8,6 +8,7 @@ import numpy as np
 import tasks
 import datautils
 from cost_dlinear import CoSTDlinear
+from cost_dlinear_v2 import CoSTDlinearV2
 from utils import init_dl_program, name_with_datetime, pkl_save, data_dropout
 
 # import methods
@@ -98,7 +99,16 @@ if __name__ == '__main__':
     
     t = time.time()
 
-    model = CoSTDlinear(
+    # model = CoSTDlinear(
+    #     input_dims=train_data.shape[-1],
+    #     kernels=args.kernels,
+    #     alpha=args.alpha,
+    #     max_train_length=args.max_train_length,
+    #     device=device,
+    #     **config
+    # )
+
+    model = CoSTDlinearV2(
         input_dims=train_data.shape[-1],
         kernels=args.kernels,
         alpha=args.alpha,
