@@ -10,7 +10,7 @@ from torch.utils.data import TensorDataset, DataLoader, Dataset
 import numpy as np
 from einops import rearrange, repeat, reduce
 
-from models.encoder import CoSTEncoder
+from models.encoder_dlinear import CoSTEncoderDlinear
 from moving_avg_tensor_dataset import TimeSeriesDatasetWithMovingAvg
 from utils import take_per_row, split_with_nan, centerize_vary_length_series, torch_pad_nan
 
@@ -171,18 +171,18 @@ class CoSTModel(nn.Module):
         loss = (logits[:, i, B + i - 1].mean() + logits[:, B + i, i].mean()) / 2
         return loss
 
-    def forward(self, x_q, x_k):
+    def forward(self, xq_avg, xq_err, xk_avg, xk_err):
         # compute query features
-        rand_idx = np.random.randint(0, x_q.shape[1])
+        rand_idx = np.random.randint(0, xq_avg.shape[1])
 
-        q_t, q_s = self.encoder_q(x_q)
+        q_t, q_s = self.encoder_q(xq_avg, xq_err)
         if q_t is not None:
             q_t = F.normalize(self.head_q(q_t[:, rand_idx]), dim=-1)
 
         # compute key features
         with torch.no_grad():  # no gradient for keys
             self._momentum_update_key_encoder()  # update key encoder
-            k_t, k_s = self.encoder_k(x_k)
+            k_t, k_s = self.encoder_k(xk_avg, xk_err)
             if k_t is not None:
                 k_t = F.normalize(self.head_k(k_t[:, rand_idx]), dim=-1)
 
@@ -192,7 +192,7 @@ class CoSTModel(nn.Module):
         self._dequeue_and_enqueue(k_t)
 
         q_s = F.normalize(q_s, dim=-1)
-        _, k_s = self.encoder_q(x_k)
+        _, k_s = self.encoder_q(xk_avg, xk_err)
         k_s = F.normalize(k_s, dim=-1)
 
         q_s_freq = fft.rfft(q_s, dim=1)
@@ -259,7 +259,7 @@ class CoSTDlinear:
         if kernels is None:
             kernels = []
 
-        self.net = CoSTEncoder(
+        self.net = CoSTEncoderDlinear(
             input_dims=input_dims, output_dims=output_dims,
             kernels=kernels,
             length=max_train_length,
@@ -320,20 +320,28 @@ class CoSTDlinear:
             
             interrupted = False
             # for batch in train_loader
-            for x1_avg, x1_err, x2_avg, x2_err in train_loader:
+            for xq_avg, xq_err, xk_avg, xk_err in train_loader:
                 if n_iters is not None and self.n_iters >= n_iters:
                     interrupted = True
                     break
 
-                x_q, x_k = map(lambda x: x.to(self.device), batch)
-                if self.max_train_length is not None and x_q.size(1) > self.max_train_length:
-                    window_offset = np.random.randint(x_q.size(1) - self.max_train_length + 1)
-                    x_q = x_q[:, window_offset : window_offset + self.max_train_length]
-                    x_k = x_k[:, window_offset : window_offset + self.max_train_length]
+                # x_q, x_k = map(lambda x: x.to(self.device), batch)
+                if self.max_train_length is not None and xq_avg.size(1) > self.max_train_length and xk_avg.size(1) > self.max_train_length \
+                        and xq_err.size(1) > self.max_train_length and xk_err.size(1) > self.max_train_length:
+                    window_offset = np.random.randint(xq_avg.size(1) - self.max_train_length + 1)
+                    xq_avg = xq_avg[:, window_offset : window_offset + self.max_train_length]
+                    xq_err = xq_err[:, window_offset : window_offset + self.max_train_length]
+                    xk_avg = xk_avg[:, window_offset : window_offset + self.max_train_length]
+                    xk_err = xk_err[:, window_offset : window_offset + self.max_train_length]
 
                 optimizer.zero_grad()
 
-                loss = self.cost(x_q, x_k)
+                xq_avg = xq_avg.to(self.device)
+                xq_err = xq_err.to(self.device)
+                xk_avg = xk_avg.to(self.device)
+                xk_err = xk_err.to(self.device)
+
+                loss = self.cost(xq_avg, xq_err, xk_avg, xk_err)
 
                 loss.backward()
                 optimizer.step()
