@@ -529,22 +529,25 @@ class CoSTDlinearV2:
         self.net_err.train(org_training_err)
         return output.numpy()
     
-    def save(self, fn):
+    def save(self, fn1, fn2):
         ''' Save the model to a file.
         
         Args:
             fn (str): filename.
         '''
-        torch.save(self.net.state_dict(), fn)
+        torch.save(self.net_avg.state_dict(), fn1)
+        torch.save(self.net_err.state_dict(), fn2)
     
-    def load(self, fn):
+    def load(self, fn1, fn2):
         ''' Load the model from a file.
         
         Args:
             fn (str): filename.
         '''
-        state_dict = torch.load(fn, map_location=self.device)
-        self.net.load_state_dict(state_dict)
+        state_dict_avg = torch.load(fn1, map_location=self.device)
+        state_dict_err = torch.load(fn2, map_location=self.device)
+        self.net_avg.load_state_dict(state_dict_avg)
+        self.net_err.load_state_dict(state_dict_err)
 
 
 def adjust_learning_rate(optimizer, lr, epoch, epochs):
