@@ -44,17 +44,19 @@ if __name__ == '__main__':
     parser.add_argument('--kernels', type=int, nargs='+', default=[1, 2, 4, 8, 16, 32, 64, 128], help='The kernel sizes used in the mixture of AR expert layers')
     parser.add_argument('--alpha', type=float, default=0.0005, help='Weighting hyperparameter for loss function')
 
-    args = parser.parse_args(['--dataset', 'ETTh1',
-                              '--run_name', 'forecast_multivar',
-                              '--alpha', '0.0005',
-                              '--kernels', '1', '2', '4', '8', '16', '32', '64', '128',
-                              '--max-train-length', '201',
-                              '--batch-size', '128',
-                              '--archive', 'forecast_csv',
-                              '--repr-dims', '320',
-                              '--max-threads', '8',
-                              '--seed', '4',
-                              '--eval'])
+    # args = parser.parse_args(['--dataset', 'ETTh1',
+    #                           '--run_name', 'forecast_multivar',
+    #                           '--alpha', '0.0005',
+    #                           '--kernels', '1', '2', '4', '8', '16', '32', '64', '128',
+    #                           '--max-train-length', '201',
+    #                           '--batch-size', '128',
+    #                           '--archive', 'forecast_csv',
+    #                           '--repr-dims', '320',
+    #                           '--max-threads', '8',
+    #                           '--seed', '4',
+    #                           '--eval'])
+
+    args = parser.parse_args()
 
     print("Dataset:", args.dataset)
     print("Arguments:", str(args))
@@ -90,7 +92,7 @@ if __name__ == '__main__':
         unit = 'epoch' if args.epochs is not None else 'iter'
         config[f'after_{unit}_callback'] = save_checkpoint_callback(args.save_every, unit)
 
-    run_dir = f"training/{args.dataset}/{name_with_datetime(args.run_name)}"
+    run_dir = f"training/forecasting/CoST/{args.dataset}__{name_with_datetime(args.run_name)}"
 
     os.makedirs(run_dir, exist_ok=True)
     

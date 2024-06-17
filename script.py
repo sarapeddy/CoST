@@ -46,17 +46,19 @@ if __name__ == '__main__':
     parser.add_argument('--kernels', type=int, nargs='+', default=[1, 2, 4, 8, 16, 32, 64, 128], help='The kernel sizes used in the mixture of AR expert layers')
     parser.add_argument('--alpha', type=float, default=0.0005, help='Weighting hyperparameter for loss function')
 
-    args = parser.parse_args(['--dataset', 'ETTh1',
-                              '--run_name', 'forecast_multivar',
-                              '--alpha', '0.0005',
-                              '--kernels', '1', '2', '4', '8', '16', '32', '64', '128',
-                              '--max-train-length', '201',
-                              '--batch-size', '128',
-                              '--archive', 'forecast_csv',
-                              '--repr-dims', '320',
-                              '--max-threads', '8',
-                              '--seed', '4',
-                              '--eval'])
+    # args = parser.parse_args(['--dataset', 'ETTh1',
+    #                           '--run_name', 'forecast_multivar',
+    #                           '--alpha', '0.0005',
+    #                           '--kernels', '1', '2', '4', '8', '16', '32', '64', '128',
+    #                           '--max-train-length', '201',
+    #                           '--batch-size', '128',
+    #                           '--archive', 'forecast_csv',
+    #                           '--repr-dims', '320',
+    #                           '--max-threads', '8',
+    #                           '--seed', '4',
+    #                           '--eval'])
+
+    args = parser.parse_args()
 
     print("Dataset:", args.dataset)
     print("Arguments:", str(args))
@@ -93,22 +95,13 @@ if __name__ == '__main__':
         unit = 'epoch' if args.epochs is not None else 'iter'
         config[f'after_{unit}_callback'] = save_checkpoint_callback(args.save_every, unit)
 
-    run_dir = f"training/forecasting/dlinear/{args.dataset}_{name_with_datetime(args.run_name)}"
+    run_dir = f"training/forecasting/dlinear/{args.dataset}__{name_with_datetime(args.run_name)}"
 
     os.makedirs(run_dir, exist_ok=True)
     
     t = time.time()
 
-    # model = CoSTDlinear(
-    #     input_dims=train_data.shape[-1],
-    #     kernels=args.kernels,
-    #     alpha=args.alpha,
-    #     max_train_length=args.max_train_length,
-    #     device=device,
-    #     **config
-    # )
-
-    model = CoSTDlinearV2(
+    model = CoSTDlinear(
         input_dims=train_data.shape[-1],
         kernels=args.kernels,
         alpha=args.alpha,
@@ -123,7 +116,7 @@ if __name__ == '__main__':
         n_iters=args.iters,
         verbose=True
     )
-    model.save(f'{run_dir}/model_avg.pkl', f'{run_dir}/model_err')
+    model.save(f'{run_dir}/model.pkl')
 
     t = time.time() - t
     print(f"\nTraining time: {datetime.timedelta(seconds=t)}\n")
