@@ -369,6 +369,8 @@ class CoSTDlinear:
 
                 if n_iters is not None:
                     adjust_learning_rate(optimizer, self.lr, self.n_iters, n_iters)
+
+                # break # only one iteration
             
             if interrupted:
                 break
@@ -384,6 +386,8 @@ class CoSTDlinear:
 
             if n_epochs is not None:
                 adjust_learning_rate(optimizer, self.lr, self.n_epochs, n_epochs)
+
+            # break # only one epoch
             
         return loss_log
     
