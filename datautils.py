@@ -79,6 +79,8 @@ def load_forecast_csv(name, univar=False):
         pred_lens = [24, 48, 168, 336, 720]
     elif name.startswith('M5'):
         pred_lens = [28]
+    elif name == 'national_illness':
+        pred_lens = [24, 36, 48, 60]
     else:
         pred_lens = [24, 48, 96, 288, 672]
         
