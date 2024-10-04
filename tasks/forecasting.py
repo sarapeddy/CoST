@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import time
 from . import _eval_protocols as eval_protocols
@@ -20,7 +22,7 @@ def cal_metrics(pred, target):
     }
 
 
-def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, padding):
+def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, padding, run_dir):
     t = time.time()
 
     all_repr = model.encode(
@@ -64,11 +66,29 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
         test_labels = test_labels.reshape(ori_shape)
 
         if test_data.shape[0] > 1:
-            test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3)).swapaxes(0, 3)
-            test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3)).swapaxes(0, 3)
-        else:
+            test_pred = test_pred.swapaxes(0, 3)
+            test_pred = test_pred.squeeze(0)
+            test_pred = test_pred.reshape(test_pred.shape[0] * test_pred.shape[1], test_pred.shape[2])
+
+            test_labels = test_labels.swapaxes(0, 3)
+            test_labels = test_labels.squeeze(0)
+            test_labels = test_labels.reshape(test_labels.shape[0] * test_labels.shape[1], test_labels.shape[2])
+
             test_pred_inv = scaler.inverse_transform(test_pred)
             test_labels_inv = scaler.inverse_transform(test_labels)
+
+            # test_pred_inv = scaler.inverse_transform(test_pred.swapaxes(0, 3)).swapaxes(0, 3)
+            # test_labels_inv = scaler.inverse_transform(test_labels.swapaxes(0, 3)).swapaxes(0, 3)
+        else:
+            test_pred = test_pred.squeeze(0)
+            test_pred = test_pred.reshape(test_pred.shape[0] * test_pred.shape[1], test_pred.shape[2])
+
+            test_labels = test_labels.squeeze(0)
+            test_labels = test_labels.reshape(test_labels.shape[0] * test_labels.shape[1], test_labels.shape[2])
+
+            test_pred_inv = scaler.inverse_transform(test_pred)
+            test_labels_inv = scaler.inverse_transform(test_labels)
+
         out_log[pred_len] = {
             'norm': test_pred,
             'raw': test_pred_inv,
@@ -79,6 +99,14 @@ def eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, 
             'norm': cal_metrics(test_pred, test_labels),
             'raw': cal_metrics(test_pred_inv, test_labels_inv)
         }
+        with open(f'{run_dir}/eval_res.json', 'w') as json_file:
+            eval_res = {
+                'ours': ours_result,
+                'ts2vec_infer_time': encoder_infer_time,
+                'lr_train_time': lr_train_time,
+                'lr_infer_time': lr_infer_time
+            }
+            json.dump(eval_res, json_file, indent=4)
         
     eval_res = {
         'ours': ours_result,
