@@ -65,19 +65,19 @@ if __name__ == '__main__':
 
     if args.archive == 'forecast_csv':
         task_type = 'forecasting'
-        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols = datautils.load_forecast_csv(args.dataset)
+        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_time_cols = datautils.load_forecast_csv(args.dataset)
         train_data = data[:, train_slice]
     elif args.archive == 'forecast_csv_univar':
         task_type = 'forecasting'
-        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols = datautils.load_forecast_csv(args.dataset, univar=True)
+        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_time_cols = datautils.load_forecast_csv(args.dataset, univar=True)
         train_data = data[:, train_slice]
     elif args.archive == 'forecast_npy':
         task_type = 'forecasting'
-        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols = datautils.load_forecast_npy(args.dataset)
+        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_time_cols = datautils.load_forecast_npy(args.dataset)
         train_data = data[:, train_slice]
     elif args.archive == 'forecast_npy_univar':
         task_type = 'forecasting'
-        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols = datautils.load_forecast_npy(args.dataset, univar=True)
+        data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_time_cols = datautils.load_forecast_npy(args.dataset, univar=True)
         train_data = data[:, train_slice]
     else:
         raise ValueError(f"Archive type {args.archive} is not supported.")
@@ -92,7 +92,7 @@ if __name__ == '__main__':
         unit = 'epoch' if args.epochs is not None else 'iter'
         config[f'after_{unit}_callback'] = save_checkpoint_callback(args.save_every, unit)
 
-    run_dir = f"training/forecasting/CoST/{args.dataset}__{name_with_datetime(args.run_name)}"
+    run_dir = f"training/forecasting/B{args.batch_size}_E{args.repr_dims}/CoST/{args.dataset}__{name_with_datetime(args.run_name)}"
 
     os.makedirs(run_dir, exist_ok=True)
     
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     print(f"\nTraining time: {datetime.timedelta(seconds=t)}\n")
 
     if args.eval:
-        out, eval_res = tasks.eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_covariate_cols, args.max_train_length-1)
+        out, eval_res = tasks.eval_forecasting(model, data, train_slice, valid_slice, test_slice, scaler, pred_lens, n_time_cols, args.max_train_length-1, run_dir)
         print('Evaluation result:', eval_res)
         pkl_save(f'{run_dir}/eval_res.pkl', eval_res)
         pkl_save(f'{run_dir}/out.pkl', out)
